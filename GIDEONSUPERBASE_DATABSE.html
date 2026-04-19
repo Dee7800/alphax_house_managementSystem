@@ -1,0 +1,155 @@
+        // Supabase Configuration - Load from localStorage
+        let supabaseConfig = JSON.parse(localStorage.getItem('alphask_supabase_config')) || null;
+        let supabaseClient = null;
+        let supabaseInitialized = false;
+
+        // Initialize Supabase if config exists
+        async function initializeSupabase() {
+            if (!supabaseConfig || !window.supabase) return false;
+
+            try {
+                supabaseClient = window.supabase.createClient(supabaseConfig.url, supabaseConfig.anonKey);
+                supabaseInitialized = true;
+                console.log('Supabase initialized successfully');
+                return true;
+            } catch (error) {
+                console.warn('Error initializing Supabase:', error);
+                return supabaseInitialized;
+            }
+        }
+
+        // Save Supabase Configuration
+        function saveSupabaseConfig(e) {
+            e.preventDefault();
+
+            supabaseConfig = {
+                url: document.getElementById('supabaseUrl').value,
+                anonKey: document.getElementById('supabaseAnonKey').value
+            };
+
+            localStorage.setItem('alphask_supabase_config', JSON.stringify(supabaseConfig));
+
+            const statusDiv = document.getElementById('supabaseStatus');
+            const statusText = document.getElementById('supabaseStatusText');
+            statusDiv.style.display = 'block';
+            statusDiv.style.background = '#c6f6d5';
+            statusText.textContent = '✓ Configuration saved! Refreshing application...';
+
+            setTimeout(() => {
+                location.reload();
+            }, 2000);
+        }
+
+        // Database wrapper with fallback to localStorage
+        class AlphaskDB {
+            constructor() {
+                this.users = [];
+                this.landlords = [];
+                this.tenants = [];
+                this.payments = [];
+                this.deposits = [];
+                this.zeroPayments = [];
+                this.vacantHouses = [];
+                this.archive = [];
+                this.useSupabase = supabaseInitialized;
+            }
+
+            async loadData() {
+                if (this.useSupabase && supabaseClient) {
+                    try {
+                        const [users, landlords, tenants, payments, deposits, zeroPayments, vacant, archive] = await Promise.all([
+                            this.readFromSupabase('users'),
+                            this.readFromSupabase('landlords'),
+                            this.readFromSupabase('tenants'),
+                            this.readFromSupabase('payments'),
+                            this.readFromSupabase('deposits'),
+                            this.readFromSupabase('zeroPayments'),
+                            this.readFromSupabase('vacantHouses'),
+                            this.readFromSupabase('archive')
+                        ]);
+
+                        this.users = users && users.length > 0 ? users : this.getDefaultUsers();
+                        this.landlords = landlords || [];
+                        this.tenants = tenants || [];
+                        this.payments = payments || [];
+                        this.deposits = deposits || [];
+                        this.zeroPayments = zeroPayments || [];
+                        this.vacantHouses = vacant || [];
+                        this.archive = archive || [];
+                    } catch (error) {
+                        console.error('Error loading from Supabase, falling back to localStorage:', error);
+                        this.loadFromLocalStorage();
+                    }
+                } else {
+                    this.loadFromLocalStorage();
+                }
+            }
+
+            getDefaultUsers() {
+                return [
+                    {
+                        id: 1,
+                        name: 'ALPHASK HOMES Admin',
+                        email: 'admin@alphaskhomes.co.ke',
+                        password: 'alphask2024',
+                        role: 'admin',
+                        phone: '0726267437'
+                    }
+                ];
+            }
+
+            loadFromLocalStorage() {
+                this.users = JSON.parse(localStorage.getItem('alphask_users')) || this.getDefaultUsers();
+                this.landlords = JSON.parse(localStorage.getItem('alphask_landlords')) || [];
+                this.tenants = JSON.parse(localStorage.getItem('alphask_tenants')) || [];
+                this.payments = JSON.parse(localStorage.getItem('alphask_payments')) || [];
+                this.deposits = JSON.parse(localStorage.getItem('alphask_deposits')) || [];
+                this.zeroPayments = JSON.parse(localStorage.getItem('alphask_zero_payments')) || [];
+                this.vacantHouses = JSON.parse(localStorage.getItem('alphask_vacant')) || [];
+                this.archive = JSON.parse(localStorage.getItem('alphask_archive')) || [];
+            }
+
+            async readFromSupabase(table) {
+                try {
+                    const { data, error } = await supabaseClient.from(table).select('*');
+                    if (error) throw error;
+                    return data ? (Array.isArray(data) ? data : Object.values(data)) : [];
+                } catch (error) {
+                    console.error(`Error reading ${table} from Supabase:`, error);
+                    return null;
+                }
+            }
+
+            async save() {
+                // Save to localStorage always (fallback)
+                localStorage.setItem('alphask_users', JSON.stringify(this.users));
+                localStorage.setItem('alphask_landlords', JSON.stringify(this.landlords));
+                localStorage.setItem('alphask_tenants', JSON.stringify(this.tenants));
+                localStorage.setItem('alphask_payments', JSON.stringify(this.payments));
+                localStorage.setItem('alphask_deposits', JSON.stringify(this.deposits));
+                localStorage.setItem('alphask_zero_payments', JSON.stringify(this.zeroPayments));
+                localStorage.setItem('alphask_vacant', JSON.stringify(this.vacantHouses));
+                localStorage.setItem('alphask_archive', JSON.stringify(this.archive));
+
+                // Also save to Supabase if connected
+                if (this.useSupabase && supabaseClient) {
+                    try {
+                        const upsertPromise = (table, data) => data.length > 0 ? supabaseClient.from(table).upsert(data) : Promise.resolve();
+                        await Promise.all([
+                            upsertPromise('users', this.users),
+                            upsertPromise('landlords', this.landlords),
+                            upsertPromise('tenants', this.tenants),
+                            upsertPromise('payments', this.payments),
+                            upsertPromise('deposits', this.deposits),
+                            upsertPromise('zeroPayments', this.zeroPayments),
+                            upsertPromise('vacantHouses', this.vacantHouses),
+                            upsertPromise('archive', this.archive)
+                        ]);
+                        console.log('Data synced to Supabase successfully');
+                    } catch (error) {
+                        console.warn('Error syncing to Supabase, data saved locally:', error);
+                    }
+                }
+            }
+        }
+
